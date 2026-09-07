@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Production RAG chatbot SSE chat UI skeleton (TypeScript)",
   "scripts": {
-    "start": "tsx src/index.ts --demo",
+    "start": "node init && tsx src/index.ts --demo",
     "serve": "tsx src/index.ts",
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit"

@@ -4,6 +4,9 @@ import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from unittest.mock import patch
+
+import build_book
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,13 +24,33 @@ This plain-text code block must also wrap its long lines without losing the fina
 ```
 
 Further reading: (http://neuralnetworksanddeeplearning.com/). Keep the URL clickable.
+
+- PaddleOCR is mature, fast, and multilingual. One-line usage: `paddleocr.PaddleOCR(lang="en").ocr(image_path)`.
+- A long MCP identifier: `params._meta.io.modelcontextprotocol/protocolVersion`.
+
+| Leaderboard | Tracks | URL |
+| --- | --- | --- |
+| Open ASR Leaderboard | English and multilingual | `huggingface.co/spaces/hf-audio/open_asr_leaderboard` |
+| TTS Arena | English TTS | `huggingface.co/spaces/TTS-AGI/TTS-Arena` |
+| Escaping | Literal symbols | `{value}#100%_ok` |
+| Unicode | Literal multiplication | `k × sr / N` |
+
+| Mistake | Why it is bad | Fix |
+| --- | --- | --- |
+| Fitting on full data before splitting | Data leakage | Use Pipeline with cross_val_score |
+| Feature engineering outside the pipeline | Different transforms at train vs serve | Put all transforms in the Pipeline |
+| Not handling unknown categories | Production crash on new values | OneHotEncoder(handle_unknown="ignore") |
+| Hardcoded column names | Breaks when features change | Use column lists from config |
+| No data validation | Silently wrong predictions | Add schema checks before prediction |
+| Training/serving skew | Model sees different features in prod | One Pipeline object for both |
+| A long plain identifier | Must remain readable in a narrow table cell | Abcdefghijklmnopqrstuvwxyz0123456789Abcdefghijklmnopqrstuvwxyz0123456789 |
 """
 
 
-def render(source, output="html"):
+def render(source, output="html", lua_filter=FILTER):
     return subprocess.run(
         ["pandoc", "--from", "markdown+fenced_divs", "--to", output,
-         "--lua-filter", str(FILTER)],
+         "--lua-filter", str(lua_filter)],
         input=source, text=True, capture_output=True, check=True,
     ).stdout
 
@@ -56,6 +79,33 @@ class BookRenderingTest(unittest.TestCase):
         self.assertEqual(result.count(r"\textless"), 3)
         self.assertEqual(result.count(r"\textgreater"), 3)
 
+    def test_table_breaks_only_long_ascii_tokens(self):
+        layout = ROOT / "book" / "pdf-layout.lua"
+        for token in ("Abcdefghijklmnopqrstuvwxyz0123456789", "package.module.LongIdentifier123"):
+            with self.subTest(token=token):
+                source = f"| Value |\n| --- |\n| {token} |\n"
+                result = render(source, "latex", layout)
+                self.assertIn(r"\allowbreak{}", result)
+                self.assertIn(token, result.replace(r"\allowbreak{}", ""))
+                self.assertEqual(render(source, "html", layout), render(source, "html"))
+        for token in ("short/path", "prefix_" + "e\u0301" * 12,
+                      "prefix_" + "👩\u200d💻" * 4, "prefix_" + "x\ufe0f" * 12):
+            with self.subTest(token=token):
+                source = f"| Value |\n| --- |\n| {token} |\n"
+                self.assertEqual(render(source, "latex", layout), render(source, "latex"))
+
+    def test_requested_pdf_failure_fails_the_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.multiple(build_book, BUILD=Path(directory), DIST=Path(directory)), \
+                 patch.object(build_book, "git_date", return_value="2026-09-07"), \
+                 patch.object(build_book, "git_edition", return_value="2026.09"), \
+                 patch.object(build_book, "pick_font", return_value=None), \
+                 patch.object(build_book.subprocess, "run", side_effect=[
+                     None, subprocess.CalledProcessError(43, "pandoc"),
+                 ]):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    build_book.render(build_book.CONFIG["volumes"][0], Path("fixture.md"), 1, pdf=True)
+
     @unittest.skipUnless(shutil.which("xelatex") and shutil.which("pdftotext"),
                          "PDF layout check requires xelatex and pdftotext")
     def test_pdf_long_code_and_urls_stay_inside_margins(self):
@@ -63,6 +113,7 @@ class BookRenderingTest(unittest.TestCase):
             pdf = Path(directory) / "wrapping.pdf"
             result = subprocess.run(
                 ["pandoc", "--from", PDF_SOURCE_FORMAT, "--pdf-engine=xelatex",
+                 "--lua-filter", str(ROOT / "book" / "pdf-layout.lua"),
                  "--include-in-header", str(ROOT / "book" / "theme.tex"),
                  "-V", "documentclass=book", "-V", "geometry=margin=1in",
                  "-o", str(pdf)],
@@ -78,8 +129,12 @@ class BookRenderingTest(unittest.TestCase):
                 self.assertGreaterEqual(float(word.attrib["xMin"]), 71, word.text)
                 self.assertLessEqual(float(word.attrib["xMax"]), right + 1, word.text)
         text = "".join(word.text or "" for word in root.findall(".//x:word", ns))
-        for marker in ("embeddings.", "PLAIN_TEXT_END.", "neuralnetworksanddeeplearning.com"):
+        for marker in ("embeddings.", "PLAIN_TEXT_END.", "neuralnetworksanddeeplearning.com",
+                       "open_asr_leaderboard", "TTS-Arena", "{value}#100%_ok", "k×sr/N",
+                       'paddleocr.PaddleOCR(lang="en").ocr(image_path)', "protocolVersion"):
             self.assertIn(marker, text)
+        self.assertIn("OneHotEncoder(handle_unknown=", text)
+        self.assertIn("Abcdefghijklmnopqrstuvwxyz0123456789" * 2, text)
 
 
 if __name__ == "__main__":
