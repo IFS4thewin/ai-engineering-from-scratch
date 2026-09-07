@@ -38,7 +38,6 @@ Thumbs.db
 *.swo
 *~
 .idea/
-.vscode/
 *.log
 
 data/
@@ -88,3 +87,7 @@ i18n/*/phases/
 i18n/*/.cache/
 i18n/*/.translate-cache.json
 site/langs.js
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore
