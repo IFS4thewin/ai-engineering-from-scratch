@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "description": "Multi-file TypeScript skeleton for the code migration agent dashboard.",
   "scripts": {
-    "start": "tsx src/index.ts",
+    "start": "node init && tsx src/index.ts",
     "serve": "SERVE=1 tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts"
